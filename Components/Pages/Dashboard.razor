@@ -1,0 +1,169 @@
+﻿@page "/dashboard"
+@rendermode InteractiveServer
+
+@inject AuthenticationStateProvider authenticationStateProvider
+@inject UserManager<ApplicationUser> userManager
+@inject RoleManager<IdentityRole> roleManager
+@inject IUserStore<ApplicationUser> store
+@using Microsoft.EntityFrameworkCore;
+
+@attribute [Authorize]
+
+<PageTitle>Dashboard</PageTitle>
+
+<h1>You are authenticated</h1>
+
+@if (IsAdmin || IsSuperAdmin)
+{
+    <p>Ciao <span class="text-danger">@Username </span> Sei un <span class="text-danger"> @(IsSuperAdmin ? "Superadmin" : "Admin") </span></p>
+
+    @if (userList is not null)
+    {
+        <TelerikContainer>
+            <TelerikGrid Data="@userList"
+                         Pageable="true"
+                         PageSize="4"
+                         Sortable="true"
+                         FilterMode="@GridFilterMode.FilterMenu"
+                         EditMode="@GridEditMode.Popup"
+                         OnUpdate="@UpdateHandler">
+                <GridColumns>
+                    <GridColumn Field="@nameof(UserListDTO.Username)" Editable="false" Title="Username" FieldType="@(typeof(string))" Visible="true" />
+                    <GridColumn Field="@nameof(UserListDTO.Email)" Editable="false" Title="Email" />
+                    <GridColumn Field="@nameof(UserListDTO.Roles)" Title="Ruolo">
+                        <EditorTemplate>
+                            @{
+                                var sss = context as IdentityRole;
+                                <TelerikDropDownList @bind-Value="@sss"
+                                                     Data="@totalRoles"
+                                                     >
+                                </TelerikDropDownList>
+                            }
+                        </EditorTemplate>
+                    </GridColumn>
+                    <GridColumn Field="@nameof(UserListDTO.Stato)" Title="Stato" Editable="true"/>
+                    <GridCommandColumn Width="100px" Reorderable="false" Title="Actions">
+                        <GridCommandButton Command="Save" Icon="@SvgIcon.Save"  ShowInEdit="true">Save</GridCommandButton>
+                        <GridCommandButton Command="Cancel" Icon="@SvgIcon.Cancel" ShowInEdit="true">Cancel</GridCommandButton>
+                        <GridCommandButton Command="Edit" Icon="@SvgIcon.Pencil" >Edit</GridCommandButton>
+                        <GridCommandButton Command="Delete" Icon="@SvgIcon.Trash">Delete</GridCommandButton>
+                    </GridCommandColumn>
+                    <GridCommandColumn Context="dataItem" Title="colonne con testo condizionale">
+                        @{
+                            var product = dataItem as UserListDTO;
+                            if (product.Roles.Contains("sa"))
+                            {
+                                <GridCommandButton Command="Delete" Icon="@SvgIcon.Trash">Delete</GridCommandButton>
+                            }
+                            else
+                            {
+                                <span>Cannot delete active products</span>
+                            }
+                        }
+                    </GridCommandColumn>
+                </GridColumns>
+            </TelerikGrid>
+        </TelerikContainer>
+    }
+}
+else
+{
+    <p> Ciao 
+        <span class="text-danger">
+            @Username
+        </span> 
+        sei solo user
+    </p>
+}
+
+@code{
+
+    private string? Username {get;set;} = "";
+
+    private bool IsAdmin { get; set; } = false;
+
+    private bool IsSuperAdmin { get; set; } = false;
+
+    private List<ApplicationUser>? users;
+
+    private List<IdentityRole>? totalRoles = new();
+
+    private List<UserListDTO>? userList = new();
+
+    private async Task UpdateHandler(GridCommandEventArgs args)
+    {
+        UserListDTO item = args.Item as UserListDTO;
+
+        // Trova l'utente corrispondente nel tuo elenco di utenti
+        ApplicationUser userToUpdate = users.FirstOrDefault(u => u.UserName == item.Username);
+
+        if (userToUpdate != null)
+        {
+            // Esegui l'aggiornamento delle proprietà dell'utente
+            userToUpdate.Email = item.Email;
+
+            // Esegui l'aggiornamento dei ruoli solo se necessario
+            var rolesToAdd = item.Roles.Split(',').Select(r => r.Trim()).Except(await userManager.GetRolesAsync(userToUpdate));
+            var rolesToRemove = (await userManager.GetRolesAsync(userToUpdate)).Except(item.Roles.Split(',').Select(r => r.Trim()));
+
+            await userManager.AddToRolesAsync(userToUpdate, rolesToAdd);
+            await userManager.RemoveFromRolesAsync(userToUpdate, rolesToRemove);
+
+            // Esegui il salvataggio dei cambiamenti
+            await userManager.UpdateAsync(userToUpdate);
+
+            // Aggiorna la griglia
+            await RefreshGrid();
+        }
+    }
+
+    private async Task RefreshGrid()
+    {
+        // Ricarica i dati della griglia
+        userList.Clear();
+
+        foreach (ApplicationUser userr in users)
+        {
+            var roles = await userManager.GetRolesAsync(userr);
+            var email = await userManager.GetEmailAsync(userr);
+
+            userList.Add(new UserListDTO()
+                {
+                    Username = userr.UserName,
+                    Email = email,
+                    Roles = roles.Count() > 0 ? string.Join(", ", roles) : "user"
+                });
+        }
+    }
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthenticationState authState = await authenticationStateProvider.GetAuthenticationStateAsync();
+        ClaimsPrincipal? user = authState.User;
+        if (user != null && user.Identity.IsAuthenticated)
+        {
+            Username = user.Identity.Name;
+            ApplicationUser? appUser = await userManager.GetUserAsync(user);
+            if (appUser != null)
+            {
+                IsAdmin = await userManager.IsInRoleAsync(appUser, "admin");
+                IsSuperAdmin = await userManager.IsInRoleAsync(appUser, "sa");
+                users = await userManager.Users.ToListAsync();
+                totalRoles = await roleManager.Roles.Where(x => x.Name != "sa").ToListAsync();
+                foreach (ApplicationUser userr in users)
+                {
+                    var roles = await userManager.GetRolesAsync(userr);
+                    var email = await userManager.GetEmailAsync(userr);
+
+                    userList?.Add(new UserListDTO()
+                        {
+                            Username = userr.UserName,
+                            Email = email,
+                            Roles = roles.Count() > 0 ? string.Join(", ", roles) : "user"
+                        });
+                }
+            }
+        }
+    }
+}
